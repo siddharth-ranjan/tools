@@ -1,0 +1,10 @@
+! f12-home -- make F12 act as Home.
+!
+! For keyboards with no physical Home key. Keycode 96 is F12 on standard X
+! keymaps; verify yours with `xmodmap -pke | grep ' = F12'` before trusting it.
+!
+! Home is repeated across all shift levels on purpose. A single `= Home` leaves
+! the shifted levels NoSymbol, which breaks Shift+F12 (select to line start)
+! and Ctrl+Shift+F12 (select to document start).
+
+keycode 96 = Home Home Home Home Home Home
