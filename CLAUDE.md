@@ -11,11 +11,12 @@ other. Each directory owns its own README and installer.
 ## Edits here change a live system
 
 **This is the most important thing to know.** Installed tools are *symlinked*
-from this repo into the user's system, not copied:
+from this repo into wherever the target system expects them, not copied:
 
 ```
 ~/.local/bin/<tool>                    -> ~/tools/<tool>/<tool>
 ~/.config/systemd/user/<tool>.service  -> ~/tools/<tool>/<tool>.service
+~/.Xmodmap                             -> ~/tools/f12-home/f12-home.Xmodmap
 ```
 
 So editing a file here takes effect on the user's machine immediately — a broken
@@ -24,16 +25,22 @@ service crash-looping. Before finishing any edit:
 
 - `bash -n <script>` — syntax check
 - run the tool's own status/dry command and confirm sane output
-- `systemctl --user is-active <tool>.service` if it has a service
-- if the service file changed: `systemctl --user daemon-reload && restart`
+- if it has a service: `systemctl --user is-active <tool>.service`, and after a
+  unit-file change `systemctl --user daemon-reload && systemctl --user restart`
+- if it has no service, verify through whatever actually owns the state
+  (e.g. `xmodmap -pke | grep '^keycode  96'` for f12-home)
 
 Do not "clean up" a tool without running it afterwards.
 
 ## Conventions
 
-**Layout.** A new tool is `<name>/` containing the executable `<name>` (no
-extension), `README.md`, `install.sh`, and any unit file. Add a row to the table
-in the root `README.md`.
+**Layout.** A new tool is `<name>/` containing `README.md`, `install.sh`, and
+its payload. The payload is an executable named `<name>` with no extension
+(`display-zoom`) *or* a data/config file the system consumes directly
+(`f12-home.Xmodmap`) — not every tool ships a program. `install.sh` is the one
+constant: it symlinks the payload into place and wires up whatever runs it
+(a systemd user service, an XDG autostart entry). Add a row to the table in the
+root `README.md`.
 
 **Scripts.** Bash, `set -uo pipefail`, subcommands via a `case` on `$1` with a
 usage line in the `*)` branch. Prefer a `status` subcommand — it makes the tool
@@ -47,6 +54,11 @@ Strip the old value before appending the new one, never append blindly.
 to stop a future reader from "fixing" something deliberate — a non-obvious API
 choice, a workaround for another program's behaviour, an accepted tradeoff.
 Every such decision in `display-zoom` is commented; match that bar.
+
+**Never clobber a user file.** An installer that writes to a shared location
+(`~/.Xmodmap`, a dotfile, a `.desktop` the distro also ships) must check for a
+pre-existing non-symlink file and back it up before replacing it. See
+`f12-home/install.sh`.
 
 **State** lives in `~/.config/<tool>.conf` as `key=value`, not in the repo.
 User preferences must survive a `git pull`.
@@ -72,3 +84,5 @@ constraints in `display-zoom` exist precisely because the session is X11.
 - **display-zoom** — scales the desktop UI to match the attached display setup.
   See `display-zoom/README.md`; the script's header comment explains why it uses
   fractional text scaling rather than the HiDPI `scaling-factor` knob.
+- **f12-home** — remaps F12 to Home via an Xmodmap fragment, reapplied at login
+  through an autostart entry. No executable; the payload is the keymap itself.
