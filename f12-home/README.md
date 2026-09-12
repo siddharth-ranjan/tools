@@ -14,8 +14,9 @@ git clone https://github.com/siddharth-ranjan/tools.git
 ./tools/f12-home/install.sh
 ```
 
-Symlinks `f12-home.Xmodmap` to `~/.Xmodmap` and adds an autostart entry that
-reapplies it at login. An existing unrelated `~/.Xmodmap` is backed up first.
+Symlinks `f12-home` into `~/.local/bin`, points `~/.Xmodmap` at the repo copy,
+and adds an autostart entry that reapplies it at login. An existing unrelated
+`~/.Xmodmap` is backed up first.
 
 Takes effect immediately — no logout needed.
 
@@ -29,6 +30,16 @@ Press F12. The modifiers work as they do on a real Home key:
 | `Shift+F12` | Select to start of line |
 | `Ctrl+F12` | Start of document |
 | `Ctrl+Shift+F12` | Select to start of document |
+
+## Verify or toggle
+
+```sh
+f12-home status    # what is bound, where the map lives, is autostart present
+f12-home apply     # reapply the map now (idempotent)
+f12-home off       # restore a real F12 for this session only
+```
+
+`off` lasts until logout — useful when you need browser dev tools for a minute.
 
 ## The tradeoff
 

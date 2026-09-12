@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# f12-home -- report F12 as Home on keyboards that have no Home key.
+#
+# The mapping itself lives in f12-home.Xmodmap and is applied at login. This
+# script exists to verify and toggle it without editing anything by hand.
+set -uo pipefail
+
+MAP="$HOME/.Xmodmap"
+AUTOSTART="$HOME/.config/autostart/f12-home.desktop"
+KEYCODE=96
+
+# Stock X keymap value for keycode 96, used to undo the remap in-session.
+F12_DEFAULT="F12 F12 F12 F12 F12 F12 XF86Switch_VT_12"
+
+current() {
+    # Prints the symbols currently bound to $KEYCODE, e.g. "Home Home Home".
+    xmodmap -pke 2>/dev/null | awk -v k="$KEYCODE" '$2 == k { sub(/^keycode +[0-9]+ = /, ""); print }'
+}
+
+case "${1:-status}" in
+    status)
+        cur="$(current)"
+        echo "keycode $KEYCODE = ${cur:-<unreadable>}"
+        case "$cur" in
+            Home*) echo "state:     active (F12 sends Home)" ;;
+            F12*)  echo "state:     inactive (F12 is F12)" ;;
+            *)     echo "state:     unknown" ;;
+        esac
+        echo "map file:  $MAP$([ -L "$MAP" ] && echo " -> $(readlink -f "$MAP")")"
+        echo "autostart: $([ -e "$AUTOSTART" ] && echo present || echo missing)"
+        ;;
+    apply)
+        # Idempotent: xmodmap replaces the binding rather than appending to it.
+        [ -e "$MAP" ] || { echo "no $MAP -- run install.sh first" >&2; exit 1; }
+        xmodmap "$MAP" || exit 1
+        echo "applied: keycode $KEYCODE = $(current)"
+        ;;
+    off)
+        # Restores F12 for this session only; login reapplies the remap.
+        xmodmap -e "keycode $KEYCODE = $F12_DEFAULT" || exit 1
+        echo "restored: keycode $KEYCODE = $(current)"
+        ;;
+    *)
+        echo "usage: f12-home {status|apply|off}" >&2
+        exit 1
+        ;;
+esac

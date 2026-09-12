@@ -85,4 +85,7 @@ constraints in `display-zoom` exist precisely because the session is X11.
   See `display-zoom/README.md`; the script's header comment explains why it uses
   fractional text scaling rather than the HiDPI `scaling-factor` knob.
 - **f12-home** — remaps F12 to Home via an Xmodmap fragment, reapplied at login
-  through an autostart entry. No executable; the payload is the keymap itself.
+  through an autostart entry. The payload is the keymap; the `f12-home`
+  executable only inspects or toggles it (`status`/`apply`/`off`) and is not a
+  daemon. `xmodmap` rewrites the keymap shared by every attached keyboard, so
+  the remap cannot be scoped to one device.
