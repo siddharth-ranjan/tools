@@ -1,7 +1,7 @@
 # tools
 
 Small personal utilities, one directory each. Every tool is self-contained and
-carries its own README and installer.
+carries its own README, installer, and CLAUDE.md.
 
 | Tool | What it does |
 |------|--------------|

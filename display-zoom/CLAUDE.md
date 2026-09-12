@@ -3,6 +3,10 @@
 Scales the desktop UI up while an external monitor is attached, back to stock on
 the laptop panel alone. See `README.md` for usage; this file is for changing it.
 
+Self-contained: this repo keeps no root-level `CLAUDE.md`. Everything that
+applies when working in this directory is below. Sibling tools are standalone —
+nothing here is a shared library and tools do not import from each other.
+
 ## Editing this changes the running desktop
 
 `~/.local/bin/display-zoom` and `~/.config/systemd/user/display-zoom.service`
@@ -76,6 +80,27 @@ design and cannot be fixed here.
   desktop.
 - New IDE versions create new config dirs, so the JetBrains globs are re-walked
   on every run rather than cached.
+
+## Repo conventions
+
+**Layout.** A tool is `<name>/` containing `README.md`, `CLAUDE.md`,
+`install.sh`, and its payload — an executable named `<name>` with no extension,
+a data file the system consumes directly, or both. `install.sh` is the one
+constant: it symlinks the payload into place and wires up whatever runs it (a
+systemd user service, an XDG autostart entry). Add a row to the table in the
+root `README.md`.
+
+**Scripts.** Bash, `set -uo pipefail`, subcommands via a `case` on `$1` with a
+usage line in the `*)` branch. Provide a `status` subcommand — it makes the tool
+verifiable without changing anything.
+
+**Never clobber a user file.** An installer writing to a shared location (a
+dotfile, a `.desktop` the distro also ships) must detect a pre-existing
+non-symlink file and back it up first. See `f12-home/install.sh`.
+
+**Comment the why, not the what.** Comments exist to stop a future reader from
+"fixing" something deliberate: a non-obvious API choice, a workaround for
+another program's behaviour, an accepted tradeoff. This tool sets the bar.
 
 ## Environment
 
