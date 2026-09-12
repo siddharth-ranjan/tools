@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# Switch Cinnamon UI scale between laptop-only and desktop (distant monitor) setups.
+# Usage: display-zoom [auto|desktop|laptop|toggle|up|down|set N|apps|status|watch]
+#
+# WHY TEXT SCALING AND NOT HIDPI SCALING:
+#   This is a viewing-distance problem, not a pixel-density one. The external
+#   monitor (2560x1440 @ 597mm) is ~109 DPI -- actually LOWER than the laptop
+#   panel (1920x1080 @ 344mm, ~142 DPI). So the usual HiDPI knob,
+#   org.cinnamon.desktop.interface scaling-factor, is wrong here twice over:
+#   it only accepts integers (1 or 2, and 2x is absurdly large), and this
+#   display does not want densification at all. text-scaling-factor takes any
+#   fraction, applies live, and stays crisp. Do not "fix" this to scaling-factor.
+#
+# WHY IT IS GLOBAL AND NOT PER-MONITOR:
+#   The session is X11 (see: echo $XDG_SESSION_TYPE), where Cinnamon cannot
+#   scale two outputs independently. So plugging in the monitor also enlarges
+#   the laptop panel. Per-monitor scaling needs Wayland, which Cinnamon still
+#   ships as experimental. Accepted tradeoff, not an oversight.
+#
+# AUTOMATION LIVES ELSEWHERE:
+#   ~/.config/systemd/user/display-zoom.service runs `display-zoom watch` and
+#   is what makes this fire on hotplug. Editing this file alone is enough --
+#   the service re-execs it per event -- but disabling the service turns the
+#   whole thing manual.  systemctl --user status display-zoom.service
+#
+# Non-GTK apps (JetBrains, Electron, browsers) ignore text-scaling-factor and
+# keep their own zoom. They must be configured individually.
+
+set -uo pipefail
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/display-zoom.conf"
+STEPS=(1.00 1.05 1.10 1.15 1.20 1.25 1.30 1.40 1.50)
+DEFAULT_SCALE=1.20   # fallback when the conf file is missing; keep in sync with your pick
+
+# Baseline pixel sizes at 1.0x; every profile is these times the scale.
+# These are not arbitrary -- they were read off this machine's Cinnamon defaults
+# before any of this existed, so scale=1.00 reproduces the original desktop
+# exactly. Re-read them with `gsettings get org.cinnamon panels-height` etc.
+# before changing, or the laptop profile stops matching stock Cinnamon.
+BASE_CURSOR=24 BASE_PANEL=24 BASE_ICON=24 BASE_SYM=28 BASE_SYM_R=16
+
+profile() { sed -n 's/^profile=//p' "$CONF" 2>/dev/null; }
+scale()   { local s; s=$(sed -n 's/^scale=//p' "$CONF" 2>/dev/null); echo "${s:-$DEFAULT_SCALE}"; }
+save()    { printf 'profile=%s\nscale=%s\n' "$1" "$2" > "$CONF"; }
+
+# round(base * scale), floored at 1 so nothing collapses to zero
+px() { awk -v b="$1" -v s="$2" 'BEGIN{v=int(b*s+0.5); print (v<1)?1:v}'; }
+
+apply() {
+  local scale=$1 cur pan ico sym symr
+  cur=$(px $BASE_CURSOR "$scale"); pan=$(px $BASE_PANEL "$scale")
+  ico=$(px $BASE_ICON "$scale");   sym=$(px $BASE_SYM "$scale")
+  symr=$(px $BASE_SYM_R "$scale")
+  gsettings set org.cinnamon.desktop.interface text-scaling-factor "$scale"
+  gsettings set org.cinnamon.desktop.interface cursor-size "$cur"
+  gsettings set org.cinnamon panels-height "['1:$pan']"
+  gsettings set org.cinnamon panel-zone-icon-sizes \
+    "[{\"panelId\": 1, \"left\": 0, \"center\": 0, \"right\": $ico}]"
+  gsettings set org.cinnamon panel-zone-symbolic-icon-sizes \
+    "[{\"panelId\": 1, \"left\": $sym, \"center\": $sym, \"right\": $symr}]"
+  apply_apps "$scale"
+}
+
+apply_desktop() { apply "$(scale)";  save desktop "$(scale)"; }
+apply_laptop()  { apply 1.00;        save laptop  "$(scale)"; }
+
+# Move the desktop scale one notch along STEPS; applies immediately if in use.
+step() {
+  local dir=$1 cur i n=${#STEPS[@]} idx=-1
+  cur=$(scale)
+  for i in "${!STEPS[@]}"; do [ "${STEPS[$i]}" = "$cur" ] && idx=$i; done
+  # `set` accepts off-ladder values (e.g. 1.18), so the current scale may not be
+  # one of STEPS. Snap to the closest rung first, otherwise up/down would have
+  # no defined starting point. awk does the compare because these are decimals
+  # and bash cannot compare them numerically.
+  if [ $idx -lt 0 ]; then
+    idx=$(awk -v c="$cur" -v l="${STEPS[*]}" 'BEGIN{split(l,a," ");b=1;m=99;
+      for(i=1;i<=length(a);i++){d=(a[i]>c)?a[i]-c:c-a[i]; if(d<m){m=d;b=i}} print b-1}')
+  fi
+  idx=$(( idx + dir ))
+  [ $idx -lt 0 ] && idx=0
+  [ $idx -ge $n ] && idx=$(( n - 1 ))
+  save "$(profile)" "${STEPS[$idx]}"
+  [ "$(profile)" = "desktop" ] && apply "${STEPS[$idx]}"
+  echo "desktop scale: ${STEPS[$idx]}"
+}
+
+# ---- app-level scaling ------------------------------------------------------
+# GTK's text-scaling-factor does not reach Java/Swing (JetBrains) or Chromium
+# (Brave), and Firefox only partly honours it, so each is configured separately.
+#
+# IMPORTANT: all three read these at STARTUP ONLY. Unlike the Cinnamon settings,
+# which apply live, an already-open IDE or browser keeps its old size until it is
+# restarted. That is a hard limit of the apps, not something this script can fix.
+
+# Write one -Dide.ui.scale line into a JetBrains .vmoptions file.
+set_vmoption() {
+  local f=$1 v=$2
+  [ -e "$f" ] || : > "$f"
+  # Toolbox writes these files WITHOUT a trailing newline; appending blind would
+  # glue our flag onto the end of the last option and corrupt both.
+  [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ] && printf '\n' >> "$f"
+  sed -i '/^-Dide\.ui\.scale=/d' "$f"   # drop the old value so this is idempotent
+  printf -- '-Dide.ui.scale=%s\n' "$v" >> "$f"
+}
+
+# IntelliJ, WebStorm, Android Studio -- Android Studio keeps config outside the
+# JetBrains dir, hence the second glob.
+apply_jetbrains() {
+  local scale=$1 d f found name
+  shopt -s nullglob
+  for d in "$HOME"/.config/JetBrains/*/ "$HOME"/.config/Google/AndroidStudio*/; do
+    found=0
+    for f in "$d"*.vmoptions; do set_vmoption "$f" "$scale"; found=1; done
+    # A freshly installed IDE has a config dir but no .vmoptions yet; create the
+    # standard filename for that product so the scale applies on first launch.
+    if [ $found -eq 0 ]; then
+      case "$(basename "$d")" in
+        AndroidStudio*)          name=studio64.vmoptions ;;
+        WebStorm*)               name=webstorm64.vmoptions ;;
+        IntelliJIdea*|IdeaIC*)   name=idea64.vmoptions ;;
+        *) continue ;;           # unknown product: do not guess
+      esac
+      set_vmoption "$d$name" "$scale"
+    fi
+  done
+  shopt -u nullglob
+}
+
+# devPixelsPerPx scales Firefox chrome AND page content together, which is what
+# matches the rest of the desktop. user.js is used rather than prefs.js because
+# Firefox rewrites prefs.js on exit and would discard an external edit.
+apply_firefox() {
+  local scale=$1 d uj
+  shopt -s nullglob
+  for d in "$HOME"/.mozilla/firefox/*/; do
+    [ -f "$d/prefs.js" ] || continue     # skip stale dirs that are not real profiles
+    uj="$d/user.js"
+    if [ -s "$uj" ]; then
+      sed -i '/layout\.css\.devPixelsPerPx/d' "$uj"
+      [ -n "$(tail -c1 "$uj")" ] && printf '\n' >> "$uj"
+    fi
+    printf 'user_pref("layout.css.devPixelsPerPx", "%s");\n' "$scale" >> "$uj"
+  done
+  shopt -u nullglob
+}
+
+# Chromium's scale is a command-line flag, so it has to go on the launcher. The
+# packaged .desktop is re-read every time rather than copied once, so that flags
+# added by a Brave update are not frozen at whatever they were on setup day.
+# Editing Brave's own Preferences JSON instead would not work: Brave overwrites
+# that file from memory on exit, silently discarding the change.
+apply_brave() {
+  local scale=$1
+  local src=/usr/share/applications/brave-browser.desktop
+  local dst="$HOME/.local/share/applications/brave-browser.desktop"
+  [ -f "$src" ] || return 0
+  mkdir -p "$(dirname "$dst")"
+  sed -E "s|^(Exec=[^ ]+)|\1 --force-device-scale-factor=$scale|" "$src" > "$dst"
+}
+
+apply_apps() {
+  apply_jetbrains "$1"
+  apply_firefox   "$1"
+  apply_brave     "$1"
+}
+
+# An external monitor is anything connected that is not the internal panel.
+# Matching by port TYPE rather than a fixed name (HDMI-1) on purpose: the card
+# number and port index shift between kernels and docks, so a hardcoded name
+# silently stops matching after an update. eDP/LVDS/DSI are the internal-panel
+# connector types; everything else (HDMI, DP, USB-C alt mode) counts as external.
+external_attached() {
+  local f name
+  for f in /sys/class/drm/card*-*/status; do
+    [ -r "$f" ] || continue
+    name=$(basename "$(dirname "$f")")
+    case "$name" in *eDP*|*LVDS*|*DSI*) continue ;; esac
+    [ "$(cat "$f")" = "connected" ] && return 0
+  done
+  return 1
+}
+
+want() { external_attached && echo desktop || echo laptop; }
+
+case "${1:-auto}" in
+  desktop) apply_desktop ;;
+  laptop)  apply_laptop ;;
+  auto)
+    target=$(want)
+    # Skip if already in that state, so manual overrides survive a no-op event.
+    [ "$(profile)" = "$target" ] && exit 0
+    apply_"$target" ;;
+  toggle)  [ "$(profile)" = "desktop" ] && apply_laptop || apply_desktop ;;
+  apps)    apply_apps "$( [ "$(profile)" = laptop ] && echo 1.00 || scale )"
+           echo "app configs written for scale $( [ "$(profile)" = laptop ] && echo 1.00 || scale ) (restart IDEs/browsers to see it)" ;;
+  down)    step -1 ;;
+  up)      step +1 ;;
+  set)
+    [ $# -eq 2 ] || { echo "usage: display-zoom set 1.20" >&2; exit 2; }
+    save "$(profile)" "$2"
+    [ "$(profile)" = "desktop" ] && apply "$2"
+    echo "desktop scale: $2" ;;
+  status)
+    printf 'external monitor : %s\n' "$(external_attached && echo yes || echo no)"
+    printf 'applied profile  : %s\n' "$(profile || echo unknown)"
+    printf 'desktop scale    : %s\n' "$(scale)"
+    printf 'text scale now   : %s\n' "$(gsettings get org.cinnamon.desktop.interface text-scaling-factor)"
+    printf 'ladder           : %s\n' "${STEPS[*]}" ;;
+  watch)
+    "$0" auto
+    # One physical hotplug emits SEVERAL drm events, and the event itself does
+    # not say what changed -- so the line is ignored (read -r _) and we just
+    # re-read /sys each time. The repeats are harmless: `auto` exits early when
+    # the profile already matches. stdbuf keeps udevadm from block-buffering
+    # into the pipe, which would delay reactions until its buffer filled.
+    stdbuf -oL udevadm monitor --udev --subsystem-match=drm 2>/dev/null | while read -r _; do
+      # The kernel marks the port connected slightly before the mode is set;
+      # reading status immediately can catch the pre-change value.
+      sleep 2
+      "$0" auto
+    done ;;
+  *) echo "usage: display-zoom [auto|desktop|laptop|toggle|up|down|set N|apps|status|watch]" >&2; exit 2 ;;
+esac

@@ -1,0 +1,23 @@
+# Runs display-zoom in watch mode so the UI scale follows the monitor being
+# plugged or unplugged. Not a network service -- it opens no sockets; it just
+# blocks on udev events and shells out to gsettings (~1.5MB resident).
+#
+# It must be a USER service, not a system one: gsettings writes to this user's
+# dbus session, which root cannot reach. graphical-session.target is what ties
+# it to the desktop being up.
+#
+# Manual control:  display-zoom [desktop|laptop|toggle|up|down|status]
+# Turn automation off:  systemctl --user disable --now display-zoom.service
+[Unit]
+Description=Scale Cinnamon UI to match the attached display setup
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/display-zoom watch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
