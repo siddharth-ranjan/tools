@@ -7,9 +7,10 @@ keeps no root-level CLAUDE.md, so everything that applies here is below.
 
 Makes F12 report Home on a keyboard that has no Home key (Portronics Bubble,
 78-key compact). The payload is `f12-home.Xmodmap`, a keymap fragment X applies
-directly. The `f12-home` executable is not a daemon — it only inspects or
-toggles the mapping. Nothing runs in the background, and nothing reads
-keystrokes.
+directly. `f12-home watch`, launched by autostart, keeps the mapping applied
+by listening for udev input-device *connect* events. It never reads keystrokes —
+the user explicitly had an earlier keystroke-reading watcher removed. Keep it
+that way.
 
 ## Edits here change a live system
 
@@ -28,8 +29,10 @@ login. A bad edit can leave a key dead. Before finishing any edit:
 - `f12-home status` — confirm sane output
 - verify through what actually owns the state, not just the tool's own report:
   `xmodmap -pke | grep '^keycode  96'`
-- this tool has no systemd service; the autostart entry only fires at login, so
-  test a mapping change with `f12-home apply` rather than assuming
+- no systemd service: the watcher is launched by XDG autostart. After editing
+  `f12-home`, restart it by rerunning `install.sh` (it replaces, never stacks)
+- to test the watcher, `f12-home off` then reconnect a Bluetooth headset;
+  `status` must return to active within ~2s
 
 Do not "clean up" this tool without running it afterwards.
 
@@ -40,9 +43,19 @@ shifted levels `NoSymbol`, which silently breaks `Shift+F12` (select to line
 start) and `Ctrl+Shift+F12`. Hence `Home` repeated six times. Do not "simplify"
 this.
 
-**The autostart entry sleeps 3 seconds.** Cinnamon loads its own keymap during
-login and overwrites anything applied earlier. Removing the sleep makes the
-remap silently fail on boot while still working when run by hand.
+**A one-shot apply is not enough — that is why `watch` exists.** X gives every
+newly added keyboard device the default layout, wiping the remap. Bluetooth
+headsets register as keyboards via AVRCP (media buttons), so connecting
+headphones minutes after login silently reverted F12. Found in Xorg.0.log:
+`Adding extended input device "HBTS004 (AVRCP)" (type: KEYBOARD)`.
+
+**`watch` sleeps 3 seconds before its first apply.** Cinnamon loads its own
+keymap during login and overwrites anything applied earlier. Removing the sleep
+makes the remap fail on boot while still working when run by hand.
+
+**`stdbuf -oL` on `udevadm monitor` is required**, and so is the 1-second wait
+plus burst drain after an `add`: one connect emits several udev events, and X
+attaches the device slightly after udev reports it.
 
 **xmodmap is global.** It rewrites the keymap shared by every attached keyboard,
 including the laptop's built-in one. It cannot be scoped to a device. Scoping

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # f12-home -- report F12 as Home on keyboards that have no Home key.
 #
-# The mapping itself lives in f12-home.Xmodmap and is applied at login. This
-# script exists to verify and toggle it without editing anything by hand.
+# The mapping itself lives in f12-home.Xmodmap. `watch` keeps it applied; the
+# other subcommands verify and toggle it without editing anything by hand.
 set -uo pipefail
 
 MAP="$HOME/.Xmodmap"
@@ -28,6 +28,7 @@ case "${1:-status}" in
         esac
         echo "map file:  $MAP$([ -L "$MAP" ] && echo " -> $(readlink -f "$MAP")")"
         echo "autostart: $([ -e "$AUTOSTART" ] && echo present || echo missing)"
+        echo "watcher:   $(pgrep -f 'f12-home watch' >/dev/null && echo running || echo 'not running')"
         ;;
     apply)
         # Idempotent: xmodmap replaces the binding rather than appending to it.
@@ -35,13 +36,40 @@ case "${1:-status}" in
         xmodmap "$MAP" || exit 1
         echo "applied: keycode $KEYCODE = $(current)"
         ;;
+    watch)
+        # Run from autostart. X hands every newly added keyboard the default
+        # layout, which wipes the remap -- and Bluetooth headsets register as
+        # keyboards (AVRCP media buttons), so connecting headphones silently
+        # turned F12 back into F12. Reapply on every input-device add.
+        #
+        # This listens to udev device events only, never to keystrokes.
+        # stdbuf is required: udevadm block-buffers into a pipe, so events would
+        # stall until 4KB accumulated.
+        [ -e "$MAP" ] || { echo "no $MAP -- run install.sh first" >&2; exit 1; }
+        sleep 3   # Cinnamon loads its own keymap at login; apply after it.
+        xmodmap "$MAP"
+        stdbuf -oL udevadm monitor --udev --subsystem-match=input 2>/dev/null |
+            while read -r line; do
+                case "$line" in
+                    *" add "*)
+                        # One connect emits several events (input + event
+                        # nodes) and X attaches the device slightly after udev
+                        # reports it. Wait, drain the burst, apply once.
+                        sleep 1
+                        while read -r -t 0.5 _; do :; done
+                        xmodmap "$MAP"
+                        ;;
+                esac
+            done
+        ;;
     off)
-        # Restores F12 for this session only; login reapplies the remap.
+        # Restores F12 until the next device connects or login; `watch`
+        # reapplies the remap then. Stop the watcher to keep F12 longer.
         xmodmap -e "keycode $KEYCODE = $F12_DEFAULT" || exit 1
         echo "restored: keycode $KEYCODE = $(current)"
         ;;
     *)
-        echo "usage: f12-home {status|apply|off}" >&2
+        echo "usage: f12-home {status|apply|watch|off}" >&2
         exit 1
         ;;
 esac

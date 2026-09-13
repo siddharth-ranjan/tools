@@ -34,12 +34,13 @@ Press F12. The modifiers work as they do on a real Home key:
 ## Verify or toggle
 
 ```sh
-f12-home status    # what is bound, where the map lives, is autostart present
+f12-home status    # what is bound, where the map lives, is the watcher running
 f12-home apply     # reapply the map now (idempotent)
-f12-home off       # restore a real F12 for this session only
+f12-home watch     # keep it applied (started by autostart; you rarely run this)
+f12-home off       # restore a real F12 until the next device connects
 ```
 
-`off` lasts until logout — useful when you need browser dev tools for a minute.
+`off` is useful when you need browser dev tools for a minute.
 
 ## The tradeoff
 
@@ -69,9 +70,8 @@ Menu (135), Scroll Lock (78), Insert (118).
   Wayland, but it needs root, a system service, and a config outside `$HOME`.
   Overkill to relabel one key.
 
-Xmodmap changes the keyboard table X already consults, so there is nothing
-running, nothing to read keystrokes, and no application sees the original key
-at all.
+Xmodmap changes the keyboard table X already consults, so no application sees
+the original key at all, and nothing ever reads keystrokes.
 
 ## Requirements and limits
 
@@ -83,9 +83,12 @@ at all.
 - **Applies to every attached keyboard**, including a laptop's built-in one.
   Xmodmap edits the shared keymap; it cannot target one device. If the built-in
   keyboard has a real F12 you want to keep, use `keyd` and match on device id.
-- **The autostart entry sleeps 3 seconds** before applying. Desktop
-  environments load their own keymap during login and would overwrite an
-  earlier change.
+- **A small watcher keeps it applied.** X gives every newly connected keyboard
+  the default layout, which wipes the remap — and Bluetooth headphones count as
+  keyboards (their play/volume buttons). A one-shot apply at login silently
+  stopped working the first time a headset connected. `f12-home watch` listens
+  for udev *device-connected* events (never keystrokes) and reapplies. It waits
+  3 seconds at login so Cinnamon's own keymap load doesn't overwrite it.
 
 ## Uninstall
 
